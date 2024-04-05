@@ -1,0 +1,453 @@
+---
+title: "Do Star Wars preferences predict income?"
+subtitle: "Probably not"
+author: "Spencer Hepworth"
+format:
+  html:
+    self-contained: true
+    page-layout: full
+    title-block-banner: true
+    toc: true
+    toc-depth: 3
+    toc-location: body
+    number-sections: false
+    html-math-method: katex
+    code-fold: true
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-copy: hover
+    code-tools:
+      source: false
+      toggle: true
+      caption: See code
+execute: 
+  warning: true
+---
+
+```{python}
+#| label: libraries
+#| include: false
+import pandas as pd
+import requests
+import certifi
+import io
+import plotly.express as px
+import numpy as np
+import re
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk import pos_tag
+import ssl
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+import matplotlib.pyplot as plt
+```
+
+## Elevator pitch
+
+_Asking whether or not star wars preferences are predictive of income is an interesting question. I went in with the hypothesis that the things from the survey that would have the most impact in predicting would be the demographic information, which turned out to be true. The Star wars preferences had very little impact on the outcome of the data._
+
+```{python}
+#| label: project-data
+#| code-summary: Read and format project data
+
+# Learn morea about Code Cells: https://quarto.org/docs/reference/cells/cells-jupyter.html
+
+# Include and execute your code here
+url = 'https://raw.githubusercontent.com/fivethirtyeight/data/master/star-wars-survey/StarWars.csv'
+
+# Securely fetch the data using requests and certifi
+response = requests.get(url, verify=certifi.where())
+
+# Check if the request was successful
+if response.status_code == 200:
+    # Read the content of the response into a pandas DataFrame
+    try:
+        data = pd.read_csv(io.StringIO(response.content.decode('utf-8')))
+    except UnicodeDecodeError:
+        data = pd.read_csv(io.StringIO(response.content.decode('ISO-8859-1')))
+else:
+    print("Failed to retrieve data: Status code", response.status_code)
+
+ssl._create_default_https_context = ssl._create_unverified_context
+```
+
+## Cleaning the data
+
+__First, we will use natural language processing as a good baseline for renaming the columns.__
+
+_It is good generic code, but we will still need to make quite a few adjustments_
+
+```{python}
+#| label: Natural Language Processing Code
+#| code-summary: We methodically came up with a way to pick out nouns, verbs, and adjectives to turn them into column names.
+# Include and execute your code here
+
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk import pos_tag
+ssl._create_default_https_context = ssl._create_unverified_context
+
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
+columns = data.columns
+
+state_of_being_verbs = {'is', 'are', 'was', 'were', 'be', 'being', 'been', 'do'}
+override_words_to_include = {'shot', 'fan'} 
+override_words_to_remove = {'please', 'select', 'apply'}
+
+def extract_relevant_words(text):
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
+
+    first_adjective = ''
+    relevant_words = []
+
+    for word, tag in tagged:
+        word_lower = word.lower()
+
+        if tag.startswith('JJ') and not first_adjective:
+            first_adjective = word
+        elif word_lower in override_words_to_include:
+            relevant_words.append(word)
+        elif (tag.startswith('VB') and word_lower not in state_of_being_verbs) or tag == 'NNP' or tag == 'CD':
+            if word_lower not in override_words_to_remove:
+                relevant_words.append(word)
+
+    if first_adjective:
+        relevant_words.insert(0, first_adjective)
+
+    if not relevant_words and tokens:
+        return tokens[0]
+
+    return ''.join(relevant_words)
+
+# Apply the function to all column names and create a mapping
+modified_column_names = [extract_relevant_words(name) for name in columns]
+column_names_mapping = dict(zip(columns, modified_column_names))
+
+# Rename the columns using the generated mapping
+data.rename(columns=column_names_mapping, inplace=True)
+
+```
+
+__Now we will clean up some more column names in preparation for graphing them__
+
+
+```{python}
+#| label: Fixing the column names for people who have seen a star wars movie
+#| code-summary: Read and format data
+# Include and execute your code here
+specific_column_names_mapping = {
+    'followingStarWarshaveseen': 'seenEpisode1',
+    'Unnamed4': 'seenEpisode2',
+    'Unnamed5': 'seenEpisode3',
+    'Unnamed6': 'seenEpisode4',
+    'Unnamed7': 'seenEpisode5',
+    'Unnamed8': 'seenEpisode6'
+}
+data.rename(columns=specific_column_names_mapping, inplace=True)
+
+seen_counts = {
+    'seenEpisode1': data['seenEpisode1'].value_counts(),
+    'seenEpisode2': data['seenEpisode2'].value_counts(),
+    'seenEpisode3': data['seenEpisode3'].value_counts(),
+    'seenEpisode4': data['seenEpisode4'].value_counts(),
+    'seenEpisode5': data['seenEpisode5'].value_counts(),
+    'seenEpisode6': data['seenEpisode6'].value_counts()
+}
+total_respondents = data['Haveseen6StarWars'].value_counts().get('Yes')
+
+seen_counts_values = list(map(lambda x: x.iloc[0], seen_counts.values()))
+
+# Movie titles for the x-axis
+movie_titles = [
+    'The Phantom Menace', 
+    'Attack of the Clones', 
+    'Revenge of the Sith', 
+    'A New Hope', 
+    'The Empire Strikes Back', 
+    'Return of the Jedi'
+]
+
+# Calculate the percentage of respondents who have seen each movie
+percentages = [count / total_respondents * 100 for count in seen_counts_values]
+
+
+
+```
+
+___Here are our results and how it compares to another company's graph__
+
+#### Their graph:
+![Percentage of respondents who have seen at least one movie's responses](https://fivethirtyeight.com/wp-content/uploads/2014/07/hickey-datalab-starwars-1.png)
+
+#### Our Graph
+```{python}
+#| label: Which star wars movies have you seen?
+#| code-summary: plot example
+#| fig-cap: "My extremely useful chart"
+#| fig-align: center
+# Include and execute your code here
+plt.figure(figsize=(10, 6))
+plt.barh(movie_titles, percentages, color='darkblue')
+plt.xlabel('Percentage of Respondents')
+plt.title('Which ‘Star Wars’ Movies Have You Seen?')
+plt.xlim(0, 100)  # Set the x-axis limit to 0-100 for percentage
+
+# Add the percentages on the bars
+for index, value in enumerate(percentages):
+    plt.text(value + 1, index, f'{value:.2f}%')  # Adjust the +1 if you need more offset from the bar
+
+plt.show()
+```
+
+__Now we will compare our results to who shot first to their results of who shot first.__
+
+#### Their graph:
+
+![Who shot first](https://fivethirtyeight.com/wp-content/uploads/2014/07/hickey-datalab-starwars-5.png)
+
+#### Our Graph
+
+```{python}
+#| label: Code for generating graph
+#| code-summary: plot example
+# Include and execute your code here
+which_shot_counts = data['Whichshot'].value_counts()
+
+# Calculate the total number of respondents
+total_respondents = data['Whichshot'].count()
+
+# Calculate the percentages
+which_shot_percentages = (which_shot_counts / total_respondents) * 100
+
+# Sort the index to ensure the order is correct when plotting
+sorted_index = ['Han', 'Greedo', "I don't understand this question"]
+which_shot_percentages = which_shot_percentages.reindex(sorted_index)
+
+```
+```{python}
+#| label: Who shot first
+#| code-summary: Plot 
+#| fig-cap: "My extremely useful chart"
+#| fig-align: center
+# Include and execute your code here
+
+
+fig, ax = plt.subplots(figsize=(10, 5))
+bars = ax.barh(which_shot_percentages.index, which_shot_percentages, color='darkblue')
+
+# Remove all spines
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+ax.spines['left'].set_visible(False)
+ax.spines['bottom'].set_visible(False)
+
+# Remove x-axis
+ax.xaxis.set_visible(False)
+
+# Remove y-axis tick marks
+ax.tick_params(axis='y', which='both', left=False)
+
+# Set y-ticks and y-tick labels to be the character names
+ax.set_yticks(range(len(sorted_index)))
+ax.set_yticklabels(sorted_index)
+
+# Add the percentage labels to the right of the bars
+for bar in bars:
+    ax.text(bar.get_width(), bar.get_y() + bar.get_height()/2, f'{int(bar.get_width())}%', va='center', ha='right')
+
+# Set the title of the plot
+ax.set_title('Who Shot First?', fontsize=14, fontweight='bold')
+
+# Add subtitle below the title
+ax.text(0, 1.1, f'According to {total_respondents} respondents', transform=ax.transAxes, fontsize=10)
+
+plt.show()
+
+```
+
+__Now we are going to clean up the rest of the data in preparation for our machine learning model__
+
+#### Cleaning the movies ranked, converting the age, education, and income categories into numbers, cleaning the ranking of characters, and one-hot encoding everything else
+```{python}
+#| label: Cleaning the rest of our data
+#| code-summary: Read and format data
+# Include and execute your code here
+
+ranked_columns_mapping = {
+    'favoriterankStarWars16': 'rankedEp1',
+    'Unnamed10': 'rankedEp2',
+    'Unnamed11': 'rankedEp3',
+    'Unnamed12': 'rankedEp4',
+    'Unnamed13': 'rankedEp5',
+    'Unnamed14': 'rankedEp6'
+}
+
+# Rename the columns in the DataFrame
+data.rename(columns=ranked_columns_mapping, inplace=True)
+
+
+star_wars_films = data.iloc[:, 3:9].stack().dropna().reset_index(drop=True)
+
+# Rename the new column
+star_wars_films.columns = ['seen']
+
+# Count the occurrences of each answer
+film_counts = star_wars_films.value_counts()
+
+#%%
+
+age_mapping = {
+    '18-29': 1,
+    '30-44': 2,
+    '45-60': 3,
+    '> 60': 4
+}
+
+# Create a new column 'AgeNumeric' with the converted numeric age ranges
+data['AgeNumeric'] = data['Age'].map(age_mapping)
+
+# Drop the original 'Age' column
+data.drop('Age', axis=1, inplace=True)
+
+# Mapping education levels to numeric values
+education_mapping = {
+    'Less than high school degree': 1,
+    'High school degree': 2,
+    'Some college or Associate degree': 3,
+    'Bachelor degree': 4,
+    'Graduate degree': 5
+}
+
+# Create a new column 'EducationNumeric' with the converted numeric education levels
+data['EducationNumeric'] = data['Education'].map(education_mapping)
+
+# Drop the original 'Education' column
+data.drop('Education', axis=1, inplace=True)
+
+
+income_mapping = {
+    '$0 - $24,999': 1,
+    '$25,000 - $49,999': 2,
+    '$50,000 - $99,999': 3,
+    '$100,000 - $149,999': 4,
+    '$150,000+': 5
+}
+
+# Create a new column 'IncomeNumeric' with the converted numeric income ranges
+data['IncomeNumeric'] = data['HouseholdIncome'].map(income_mapping)
+
+# Drop the original 'HouseholdIncome' column
+data.drop('HouseholdIncome', axis=1, inplace=True)
+#%%
+
+
+
+#%%
+
+film_seen_columns = data.columns[1:7] 
+
+filtered_data = data[film_seen_columns].apply(lambda x: x == 'Yes').any(axis=1)
+
+seen_at_least_one_film = data[filtered_data]
+#%%
+
+columns_to_rename = [
+    'followingview', 'Unnamed16', 'Unnamed17', 'Unnamed18', 'Unnamed19', 'Unnamed20', 
+    'Unnamed21', 'Unnamed22', 'Unnamed23', 'Unnamed24', 'Unnamed25', 
+    'Unnamed26', 'Unnamed27', 'Unnamed28'
+]
+
+sentiment_mapping = {
+    'Very unfavorably': 1,
+    'Somewhat unfavorably': 2,
+    'Neither favorably nor unfavorably (neutral)': 3,
+    'Somewhat favorably': 4,
+    'Very favorably': 5,
+    'Unfamiliar (N/A)': 0  # Assuming 0 for 'Unfamiliar' if it should be included
+}
+
+# Rename columns based on the first row's content and keep track of the new names
+new_names = []
+for col in columns_to_rename:
+    new_col_name = data[col].iloc[0].split(',')[0].replace(' ', '')
+    data.rename(columns={col: new_col_name}, inplace=True)
+    new_names.append(new_col_name)
+
+# Remove the row where the column name is a data entry, using the new names
+for new_col_name in new_names:
+    data = data[data[new_col_name] != new_col_name]
+
+for col in new_names:  # Assuming 'new_names' contains the new column names
+    data[col] = data[col].map(sentiment_mapping)
+
+
+# Identify columns that are still of type object
+non_numeric_columns = data.select_dtypes(include=['object']).columns
+
+columns_to_one_hot = [
+    'Haveseen6StarWars', 'considerfanStarWars',
+    'seenEpisode1', 'seenEpisode2', 'seenEpisode3', 'seenEpisode4',
+    'seenEpisode5', 'seenEpisode6', 'Whichshot',
+    'familiarAreExpandedUniverse', 'considerfanExpandedUniverse',
+    'considerfanStarTrek', 'Gender', 'CensusRegion', 'rankedEp1', 'rankedEp2', 'rankedEp3', 'rankedEp4',
+       'rankedEp5', 'rankedEp6', 'HanSolo', 'LukeSkywalker',
+       'PrincessLeiaOrgana', 'AnakinSkywalker', 'ObiWanKenobi',
+       'EmperorPalpatine', 'DarthVader', 'LandoCalrissian', 'BobaFett',
+       'C-3P0', 'R2D2', 'JarJarBinks', 'PadmeAmidala', 'Yoda'
+]
+
+# Apply one-hot encoding to the specified columns and update the original dataset
+data = pd.get_dummies(data, columns=columns_to_one_hot)
+
+
+
+```
+
+__Now we will run our machine learning model. We are going to use the income categories of >= to 3 to see if we can predict who makes more than $50,000 per year.__
+
+_We discover here that with our best performing model, the gradient booster, education, age, and the respondent id account for 48.54% of the model's accuracy. Our model was able to predict who makes over $50,000 per year with a 69% accuracy_
+
+```{python}
+#| label: Machine learning Star wars data
+#| code-summary: Running the 3 different models
+# Include and execute your code here
+
+data['Target'] = data['IncomeNumeric'] >= 3
+X = data.drop(['IncomeNumeric', 'Target'], axis=1).fillna(0)
+y = data['Target']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+models = {
+    'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
+    'Gradient Boosting': GradientBoostingClassifier(random_state=42),
+    'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42)
+}
+
+feature_importances = {}
+
+for name, model in models.items():
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f'{name} Accuracy: {accuracy}')
+    
+    if hasattr(model, 'feature_importances_'):
+        importances = model.feature_importances_
+    elif hasattr(model, 'coef_'):
+        importances = abs(model.coef_[0])
+    else:
+        importances = [0] * len(X.columns)  # Placeholder if the model does not have feature importances or coefficients
+    
+    feature_importances[name] = dict(zip(X.columns, importances))
+
+# Display the top 10 important features for each model
+for name, importances in feature_importances.items():
+    print(f'\n{name} - Top 10 Features:')
+    for feature, importance in sorted(importances.items(), key=lambda x: x[1], reverse=True)[:10]:
+        print(f'{feature}: {importance:.4f}')
+```

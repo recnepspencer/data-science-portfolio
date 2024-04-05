@@ -1,0 +1,296 @@
+---
+title: "Client Report - Using Machine Learning to Predict Which Houses are Old"
+subtitle: "Course DS 250"
+author: "Spencer Hepworth"
+format:
+  html:
+    self-contained: true
+    page-layout: full
+    title-block-banner: true
+    toc: true
+    toc-depth: 3
+    toc-location: body
+    number-sections: false
+    html-math-method: katex
+    code-fold: true
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-copy: hover
+    code-tools:
+        source: false
+        toggle: true
+        caption: See code
+execute: 
+  warning: false
+    
+---
+
+```{python}
+#| label: libraries
+#| include: false
+import requests
+import datetime
+import certifi
+import pandas as pd
+import io
+import plotly.graph_objects as go
+import plotly.express as px
+import numpy as np
+from types import GeneratorType
+import pandas as pd
+import altair as alt
+import numpy as np
+import seaborn as sns
+from sklearn.metrics import accuracy_score
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import KBinsDiscretizer
+import numpy as np
+import matplotlib.pyplot as plt
+from tabulate import tabulate
+
+from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
+from sklearn.naive_bayes import GaussianNB
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn import metrics
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+```
+
+
+## Safety for your family:
+
+_Using this model will be essential for promoting the safety of individuals, especially when working with data that the year of the house built is unavailable. This is essential for those who might be sentitive to materials used to be built in older homes, and those who was to exercise an abundance of caution towards materials such as lead paint and aspestous._
+
+_We were able to build a reliable model with 95.9% accuracy. It uses the random tree classifier to analyze the data to make predictions about which houses were built before 1980. Parting out the parcel data was an important step in getting the last few increments of accuracy. Live area was another important piece in detecting old houses._
+
+```{python}
+
+# Securely fetch the data using requests and certifi
+url1 = 'https://github.com/byuidatascience/data4dwellings/raw/master/data-raw/dwellings_denver/dwellings_denver.csv'
+url2 = 'https://raw.githubusercontent.com/byuidatascience/data4dwellings/master/data-raw/dwellings_ml/dwellings_ml.csv'
+
+response1 = requests.get(url1, verify=certifi.where())
+response2 = requests.get(url2, verify=certifi.where())
+
+# Check if the request was successful
+if response1.status_code == 200:
+    # Read the content of the response into a pandas DataFrame
+    denver_data = pd.read_csv(io.StringIO(response1.content.decode('utf-8')))
+    # Print the first 5 rows of the data
+else:
+    print("Failed to retrieve data: Status code", response1.status_code)
+if response2.status_code == 200:
+    # Read the content of the response into a pandas DataFrame
+    ml_data = pd.read_csv(io.StringIO(response2.content.decode('utf-8')))
+    # Print the first 5 rows of the data
+else:
+    print("Failed to retrieve data: Status code", response2.status_code)
+
+variable_description = {
+    'parcel': 'Character: The parcel id',
+    'abstrprd': 'Numeric: No clue',
+    'livearea': 'Numeric: Square footage that is liveable',
+    'finbsmnt': 'Numeric: Square footage finished in the basement',
+    'basement': 'Numeric: Total square footage of the basement',
+    'yrbuilt': 'Numeric: Year the home was built',
+    'totunits': 'Numeric: How many dwelling units in the building',
+    'stories': 'Numeric: The number of stories',
+    'nocars': 'Numeric: Size of the garage in cars',
+    'numbdrm': 'Numeric: Number of bedrooms',
+    'numbaths': 'Numeric: Number of bathrooms',
+    'sprice': 'Numeric: Selling price',
+    'deduct': 'Numeric: Deduction from the selling price',
+    'netprice': 'Numeric: Net price of home',
+    'tasp': 'Numeric: Tax assessed selling price',
+    'smonth': 'Numeric: Month sold',
+    'syear': 'Numeric: Year sold',
+    'condition_AVG': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'condition_Excel': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'condition_Fair': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'condition_Good': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'condition_VGood': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'quality_A': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'quality_B': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'quality_C': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'quality_D': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'quality_X': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'gartype_Att': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'gartype_Att/Det': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'gartype_CP': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'gartype_Det': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'gartype_None': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'gartype_att/CP': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'gartype_det/CP': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_BI-LEVEL': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_CONVERSIONS': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_END UNIT': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_MIDDLE UNIT': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_ONE AND HALF-STORY': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_ONE-STORY': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_SPLIT LEVEL': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_THREE-STORY': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_TRI-LEVEL': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_TRI-LEVEL WITH BASEMENT': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_TWO AND HALF-STORY': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'arcstyle_TWO-STORY': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'qualified_Q': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'qualified_U': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'status_I': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'status_V': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'before1980': 'Numeric: 0 or 1 to mark building having attribute as 1',
+    'book_num': 'Numeric: The first part of the parcel id',
+    'page_num': 'Numeric: The second part of the parcel number',
+    'parcel_num': 'Numeric: The part of the parcel number related to their portion of land',
+    'unit_num': 'Numeric: The part of the parcel related to the unit number.'
+}
+
+
+```
+
+__Here we will explore the relationship between homes built before 1980 and different aspects of our data. This will help us discover what metrics will be useful for our model.__
+
+## Graph: Live area and year built:
+
+_Here we see the live area density of homes built before 1980 peaks in a different area as compared to homes built after 1980 _
+
+```{python}
+#| label: Kernel density graph of the relationship between homes built before 1980 and live area. We limited it to 6000 square feet to control for outliers and to help make the graph more readable.
+livearea_range = (0, 6000)
+plt.figure(figsize=(10, 6))
+sns.kdeplot(
+    data=ml_data,
+    x='livearea',
+    hue='before1980',
+    common_norm=False,
+    clip=livearea_range
+)
+plt.title('Density of Buildings by Live Area and Year Built')
+plt.xlabel('Live Area (sq ft)')
+plt.ylabel('Density')
+plt.xlim(livearea_range)  # Limit the x-axis to the range of interest
+plt.grid(True)
+plt.show()
+
+```
+
+## Graph: Heatmap for the correlation between parcel data and year built
+_We discover that there is a strong correlation between parcel number and parcel units._
+
+```{python}
+#| label: Q2
+#| code-summary: the heatmap of our data
+
+dwellings_ml = ml_data.copy()
+
+# Split the 'parcel' column into separate parts and expand into separate columns
+parcel_parts = dwellings_ml['parcel'].str.split('-', expand=True)
+
+dwellings_ml['book_num'] = pd.to_numeric(dwellings_ml['parcel'].str.split('-', expand=True)[0], errors='coerce')
+dwellings_ml['page_num'] = pd.to_numeric(dwellings_ml['parcel'].str.split('-', expand=True)[1], errors='coerce')
+dwellings_ml['parcel_num'] = pd.to_numeric(dwellings_ml['parcel'].str.split('-', expand=True)[2], errors='coerce')
+dwellings_ml['unit_num'] = pd.to_numeric(dwellings_ml['parcel'].str.split('-', expand=True)[3], errors='coerce')
+
+
+dwellings_ml['parcel_unit_interaction'] = pd.to_numeric(dwellings_ml['parcel_num'] * dwellings_ml['unit_num'], errors='coerce')
+
+
+features_to_correlate = ['book_num', 'page_num', 'parcel_num', 'unit_num', 'yrbuilt']
+correlation_matrix = dwellings_ml[features_to_correlate].corr()
+
+# Plotting the heatmap
+plt.figure(figsize=(10, 8))
+sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap='coolwarm', cbar=True, square=True)
+plt.title('Correlation Heatmap Including Unit Numbers')
+plt.xticks(rotation=45)
+plt.yticks(rotation=0)  
+plt.show()
+
+
+```
+
+
+
+## The best man for the job: Random Forest Classifier
+
+_Included for the model are all rows of data. We let the program decide which data is significant and which data isn't.  In addition, we turned the parcel number into more useful pieces of data. I chose this model because I ran code to simultaneously test all the models, and this is the one with the best results. _
+
+```{python}
+#| label: RFC Classifier
+X = dwellings_ml.drop(columns=['yrbuilt', 'before1980', 'parcel'])
+y = dwellings_ml['before1980']
+
+X = pd.get_dummies(X, drop_first=True)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+
+# Best parameters found by GridSearchCV
+best_params = {'max_depth': None, 
+               'min_samples_leaf': 1, 
+               'min_samples_split': 5, 
+               'n_estimators': 200}
+
+# Initialize the RandomForestClassifier with the best parameters
+rfc_optimized = RandomForestClassifier(max_depth=best_params['max_depth'],
+    min_samples_leaf=best_params['min_samples_leaf'],
+    min_samples_split=best_params['min_samples_split'],
+    n_estimators=best_params['n_estimators'],
+    random_state=42)  # It's good practice to set a random_state for reproducibility
+
+# Now, you can fit this model to your training data
+rfc_optimized.fit(X_train, y_train)
+
+# And make predictions or evaluate its performance
+y_pred = rfc_optimized.predict(X_test)
+
+# Evaluate the model
+
+test_accuracy = accuracy_score(y_test, y_pred)
+print(f"Test set accuracy with optimized parameters: {test_accuracy:.4f}")
+
+```
+
+_Book number appears to be the most important determiner when learning whether a house was built before 1980._
+
+```{python}
+feature_importances = rfc_optimized.feature_importances_
+importance_df = pd.DataFrame({'Feature': X_train.columns, 'Importance': feature_importances})
+
+# Merge importance_df with variable_description
+importance_df = importance_df.merge(pd.DataFrame.from_dict(variable_description, orient='index', columns=['Description']),
+    left_on='Feature', right_index=True, how='left')
+
+# Sort the DataFrame by importance values in descending order
+importance_df = importance_df.sort_values(by='Importance', ascending=False)
+
+top_n = 10  # You can adjust this value to print more or fewer features
+print("Top {} most important features:".format(top_n))
+print(tabulate(importance_df.head(top_n), headers='keys', tablefmt='fancy_grid'))
+```
+
+
+## Justification of metrics: 
+
+_Precision: Imagine you're trying to guess which houses were built before 1980. Precision is like being precise with your guesses. If your precision is high, it means most of the houses you guessed were built before 1980 are actually correct. So, if you say, "I think this house was built before 1980," you're usually right._
+
+_Recall: Recall is like not missing any houses that were actually built before 1980. If your recall is high, it means you're good at spotting all the houses that were built before 1980. So, you don't miss many old houses when you're guessing which ones are old._
+
+_F1 Score: The F1 score combines both precision and recall. It's like looking at both how often you're right with your guesses and how many old houses you manage to find. A high F1 score means you're both accurate with your guesses and you don't miss many old houses. It's like hitting a sweet spot between being right and not missing anything._
+```{python}
+#| label: Accuracy metrics
+## Calculate the precision
+precision = precision_score(y_test, y_pred)
+
+# Calculate the recall
+recall = recall_score(y_test, y_pred)
+
+# Calculate the F1 score
+f1 = f1_score(y_test, y_pred)
+
+# Print the evaluation metrics
+print("Precision:", round(precision, 4))
+print("Recall:", round(recall, 4))
+print("F1 Score:", round(f1, 4))
+
+```

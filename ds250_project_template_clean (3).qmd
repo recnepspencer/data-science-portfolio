@@ -1,0 +1,350 @@
+---
+title: "Client Report - Project 3"
+subtitle: "Course DS 250"
+author: "Spencer Hepworth"
+format:
+  html:
+    self-contained: true
+    page-layout: full
+    title-block-banner: true
+    toc: true
+    toc-depth: 3
+    toc-location: body
+    number-sections: false
+    html-math-method: katex
+    code-fold: true
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-copy: hover
+    code-tools:
+        source: false
+        toggle: true
+        caption: See code
+execute: 
+  warning: false
+    
+---
+
+```{python}
+#| label: libraries
+#| include: false
+import pandas as pd 
+import numpy as np
+import sqlite3
+import statsmodels.api as sm
+import plotly.express as px
+import plotly.graph_objects as go
+
+```
+
+
+## Elevator pitch
+
+_Our project leverages advanced analytics to illuminate the relationship between a Major League Baseball team's performance and its financial strategy. We've developed a model that specifically examines how the previous year's home run statistics predict the following year's salary allocations for the Boston Red Sox and New York Yankees. Our findings provide strategic insights that can guide team investments and roster decisions, utilizing historical data to forecast salary trends with significant precision. This approach empowers teams to optimize their spending for maximum on-field effectiveness, offering a competitive edge in the league's dynamic environment._
+
+
+```{python}
+#| label: Get project data
+#| code-summary: Read and format project data
+sqlite_file = 'lahmansbaseballdb.sqlite'
+con = sqlite3.connect(sqlite_file)
+
+q = 'SELECT * FROM allstarfull LIMIT 5'
+results = pd.read_sql_query(q,con)
+
+results
+
+q = '''
+    SELECT * 
+    FROM sqlite_master 
+    WHERE type='table'
+    '''
+table = pd.read_sql_query(q,con)
+```
+
+## QUESTION|TASK 1
+__Write an SQL query to create a new dataframe about baseball players who attended BYU-Idaho. The new table should contain five columns: playerID, schoolID, salary, and the yearID/teamID associated with each salary. Order the table by salary (highest to lowest) and print out the table in your report.__
+
+_Here we discover that 2 different people in the database attended BYU-Idaho._
+
+```{python}
+#| label: Q1
+byui_salary_query = """
+SELECT p.nameFirst as 'First Name', p.nameLast as 'Last Name', cp.playerID, cp.schoolID, s.salary, s.yearID, s.teamID
+FROM collegeplaying AS cp
+JOIN salaries AS s ON cp.playerID = s.playerID
+JOIN people AS p ON cp.playerID = p.playerID
+WHERE cp.schoolID = 'idbyuid'
+ORDER BY s.salary DESC;
+"""
+
+# Use pandas to run the SQL query and create a DataFrame
+df = pd.read_sql_query(byui_salary_query, con)
+
+# Print the DataFrame
+print(df)
+```
+
+## QUESTION|TASK 2
+
+<div>
+
+<h1>This three-part question requires you to calculate batting average (number of hits divided by the number of at-bats)
+</h1>
+
+<p>Write an SQL query that provides playerID, yearID, and batting average for players with at least 1 at bat that year. Sort the table from highest batting average to lowest, and then by playerid alphabetically. Show the top 5 results in your report.</p>
+
+<p>Use the same query as above, but only include players with at least 10 at bats that year. Print the top 5 results.</p>
+
+<p>Now calculate the batting average for players over their entire careers (all years combined). Only include players with at least 100 at bats, and print the top 5 results.</p>
+
+<div>
+
+<h3>Part 1</h3>
+```{python}
+#| label: Q2 Part 1
+at_least_one_bat_query = """
+SELECT playerID, yearID, CAST(H AS FLOAT) / AB AS battingAverage
+FROM Batting
+WHERE AB >= 1
+ORDER BY battingAverage DESC, playerID
+LIMIT 5;
+"""
+
+df = pd.read_sql_query(at_least_one_bat_query, con)
+print(df)
+
+```
+
+<h3>Part 2</h3>
+
+```{python}
+#| label: Q2 Part 2
+at_least_ten_bats_query = """
+SELECT playerID, yearID, CAST(H AS FLOAT) / AB AS battingAverage
+FROM Batting
+WHERE AB >= 10
+ORDER BY battingAverage DESC, playerID
+LIMIT 5;
+"""
+
+df = pd.read_sql_query(at_least_ten_bats_query, con)
+print(df)
+
+```
+<h3>Part 3</h3>
+
+```{python}
+#| label: Q2 Part 3
+at_least_hundo_bats_query = """
+SELECT playerID, SUM(H) AS totalHits, SUM(AB) AS totalAtBats, CAST(SUM(H) AS FLOAT) / SUM(AB) AS careerBattingAverage
+FROM Batting
+GROUP BY playerID
+HAVING SUM(AB) >= 100
+ORDER BY careerBattingAverage DESC, playerID
+LIMIT 5;
+"""
+
+df = pd.read_sql_query(at_least_hundo_bats_query, con)
+print(df)
+
+```
+
+
+
+
+## QUESTION|TASK 3
+
+__Pick any two baseball teams and compare them using a metric of your choice (average salary, home runs, number of wins, etc). Write an SQL query to get the data you need, then make a graph using Plotly Express to visualize the comparison. What do you learn?__
+
+_We used the historical CPI data to get a good metric for inflation and added to the database. Then we calculated the increase in home runs compared to last year as well as the change in salary compared to last year. _
+
+```{python}
+#| label: Q3
+#| code-summary: Add the inflation data and make the sql query
+con = sqlite3.connect('lahmansbaseballdb.sqlite')
+create_table_stmt = """
+CREATE TABLE IF NOT EXISTS InflationRates (
+    Year INTEGER PRIMARY KEY,
+    Inflation_Rate REAL
+);
+"""
+con.execute(create_table_stmt)
+
+# Inflation data
+inflation_data = {
+    'Year': list(range(1983, 2024)),
+    'Inflation_Rate': [
+        3.2, 4.3, 3.6, 1.9, 3.6, 4.1, 4.8, 5.4, 4.2, 3.0, 3.0,
+        2.6, 2.8, 3.0, 2.3, 1.6, 2.2, 3.4, 2.8, 1.6, 2.3, 2.7,
+        3.4, 3.2, 2.8, 3.8, -0.4, 1.6, 3.2, 2.1, 1.5, 1.6, 0.1,
+        1.3, 2.1, 2.4, 1.8, 1.2, 4.7, 8.0, 4.1
+    ]
+}
+
+# Prepare SQL insert statement
+insert_stmt = 'INSERT OR IGNORE INTO InflationRates (Year, Inflation_Rate) VALUES (?, ?)'
+
+# Insert each row of data
+for year, rate in zip(inflation_data['Year'], inflation_data['Inflation_Rate']):
+    con.execute(insert_stmt, (year, rate))
+
+# Commit changes and close connection
+con.commit()
+
+home_runs_over_salary_query = """
+WITH TeamStats AS (
+    SELECT 
+        b.yearID,
+        b.teamID,
+        SUM(b.HR) AS totalHRs,
+        SUM(s.salary) AS totalSalary
+    FROM Batting b
+    JOIN Salaries s ON b.playerID = s.playerID AND b.yearID = s.yearID
+    GROUP BY b.yearID, b.teamID
+),
+InflationAdjusted AS (
+    SELECT 
+        ts.yearID,
+        ts.teamID,
+        ts.totalHRs,
+        ts.totalSalary,
+        LAG(ts.totalHRs) OVER(PARTITION BY ts.teamID ORDER BY ts.yearID) AS lastYearHRs,
+        LAG(ts.totalSalary) OVER(PARTITION BY ts.teamID ORDER BY ts.yearID) AS lastYearSalary,
+        ir.Inflation_Rate
+    FROM TeamStats ts
+    JOIN InflationRates ir ON ts.yearID = ir.Year
+),
+SalaryHRComparison AS (
+    SELECT 
+        yearID,
+        teamID,
+        totalHRs,
+        totalSalary,
+        lastYearHRs,
+        lastYearSalary,
+        totalHRs - lastYearHRs AS HR_Difference,
+        (totalSalary - (lastYearSalary * (1 + Inflation_Rate / 100))) AS SalaryDiff_AdjustedForInflation
+    FROM InflationAdjusted
+)
+SELECT 
+    yearID,
+    teamID,
+    totalHRs,
+    totalSalary,
+    lastYearHRs,
+    lastYearSalary,
+    HR_Difference,
+    SalaryDiff_AdjustedForInflation
+FROM SalaryHRComparison
+WHERE HR_Difference > 0
+ORDER BY teamID, yearID;
+
+"""
+
+
+```
+
+_include figures in chunks and discuss your findings in the figure._
+
+```{python}
+#| label: Q3 Statistics
+#| code-summary: Here we calculate the startistics for our graph
+
+df = pd.read_sql_query(home_runs_over_salary_query, con)
+
+X = sm.add_constant(df['HR_Difference'])
+y = df['SalaryDiff_AdjustedForInflation'] 
+
+model = sm.OLS(y, X).fit()
+
+print(model.summary())
+
+df['predictions'] = model.predict(X)
+
+
+```
+
+
+```{python}
+#| label: Q3 Graph
+#| code-summary: Here we graph the results of our data
+
+# Initialize a Plotly figure
+fig = go.Figure()
+
+# Colors for the teams
+colors = {
+    'BOS': 'Crimson',
+    'NYA': 'RoyalBlue'
+}
+
+# Mapping the teamID to the full team name for display
+team_names = {
+    'BOS': 'Red Sox',
+    'NYA': 'Yankees'
+}
+
+# Loop through each team to plot
+for team, color in colors.items():
+    # Filter the DataFrame for the current team
+    team_df = df[df['teamID'] == team]  # Assuming SettingWithCopyWarning is not an issue here
+    
+    # Assuming the correct column names are 'HR_Difference' and 'SalaryDiff_AdjustedForInflation'
+    # Prepare the data for regression
+    X_team = sm.add_constant(team_df['HR_Difference'])  # Predictor with constant added
+    y_team = team_df['SalaryDiff_AdjustedForInflation']  # Response variable
+    
+    # Perform linear regression
+    model_team = sm.OLS(y_team, X_team).fit()
+    
+    # Store predictions for plotting
+    team_df = team_df.assign(predictions=model_team.predict(X_team))
+    
+    # Plotting Actual Data Points with customized hover text
+    fig.add_trace(go.Scatter(
+        x=team_df['HR_Difference'], y=team_df['SalaryDiff_AdjustedForInflation'],
+        mode='markers', name=f'{team_names[team]}',
+        marker=dict(color=color),
+        text=team_df['yearID'],  # Add the year to the hover information
+        hovertemplate=f"<b>{team_names[team]}</b><br>" +
+                      "%{x} more home runs than last year.<br>" +
+                      "Salary change: %{y} <br>" +
+                      "Year: %{text}<br>" +
+                      "<extra></extra>"  # Removes the trace name from the hover text
+    ))
+    
+    # Plotting Regression Line
+    fig.add_trace(go.Scatter(
+        x=team_df['HR_Difference'], y=team_df['predictions'],
+        mode='lines', name=f'{team_names[team]} Regression Line',
+        line=dict(color=color)
+    ))
+
+    team_index = list(colors.keys()).index(team)
+    fig.add_annotation(
+        xref="paper", yref="paper", x=0.05, y=1 - (0.08 * (team_index + 1)),  # Adjust y for each team
+        text=f"{team_names[team]} p-value: {model_team.pvalues[1]:.4f}",
+        showarrow=False,
+        font=dict(size=12, color=color),
+        bgcolor="rgba(255,255,255,0.9)",
+        bordercolor=color,
+        borderwidth=1,
+        align="left"
+)
+
+# Updating the layout of the plot
+fig.update_layout(
+    title='Regression: Does hitting more home runs lead to a team salary increase?',
+    xaxis_title='Year-over-Year HR Difference',
+    yaxis_title='Inflation-Adjusted Salary Increase',
+    legend_title='Legend',
+    hovermode='closest'
+)
+
+fig.show()
+
+
+```
+
+<figcaption>Here we discover that there is not enough evidence to conclude that there is a relationship between hitting more home runs and a team's salary increase. In fact, the p-value is very high, which means that it is extremely unlikely that there is a liner correlation in the data.</figcaption>

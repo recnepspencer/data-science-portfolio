@@ -1,0 +1,286 @@
+---
+title: "Client Report - Project 1"
+subtitle: "Course DS 250"
+author: "Spencer Hepworth"
+format:
+  html:
+    self-contained: true
+    page-layout: full
+    title-block-banner: true
+    toc: true
+    toc-depth: 3
+    toc-location: body
+    number-sections: false
+    html-math-method: katex
+    code-fold: true
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-copy: hover
+    code-tools:
+        source: false
+        toggle: true
+        caption: See code
+execute: 
+  warning: false
+    
+---
+
+```{python}
+#| label: libraries
+#| include: false
+import pandas as pd
+import requests
+import certifi
+import io
+import plotly.express as px
+```
+
+
+## Elevator pitch
+
+The data shows that there are many factors that may or may not affect the popularity of a name. However, there is one clear trend among most names -- they become increasingly popular until they taper off and fall back down to average levels. There are cultural groups of names that also seem to have correlations. It is important to note, however, that each case may be unique and different.
+
+```{python}
+#| label: project data
+#| code-summary: Read and format project data
+# Include and execute your code here
+url = 'https://raw.githubusercontent.com/byuidatascience/data4names/master/data-raw/names_year/names_year.csv'
+
+# Securely fetch the data using requests and certifi
+response = requests.get(url, verify=certifi.where())
+
+# Check if the request was successful
+if response.status_code == 200:
+    # Read the content of the response into a pandas DataFrame
+    df = pd.read_csv(io.StringIO(response.content.decode('utf-8')))
+    # Print the first 5 rows of the data
+else:
+    print("Failed to retrieve data: Status code", response.status_code)
+
+```
+
+__Highlight the Questions and Tasks__
+
+## QUESTION|TASK 1
+
+How does your name at your birth year compare to its use historically?
+
+My name peaked the year before I was born. It followed the trend of many names, which is that it follows an average trend, becomes popular, then falls back down again. 
+
+```{python}
+#| label: Q1
+#| code-summary: Read and format data
+# Include and execute your code here
+spencer_df = df.set_index('name').loc['Spencer']
+
+spencer_chart = px.bar(spencer_df,
+    x='year', 
+    y='Total', 
+    height=800, 
+    width=800, 
+    title='Usage of the name Spencer over time')
+
+# Add annotation for the year you were born
+spencer_chart.add_annotation(
+    x=1999,
+    y=spencer_df[spencer_df['year'] == 1999]['Total'].values[0],
+    text='When I was born',
+    showarrow=True,
+    arrowhead=1)
+
+spencer_chart.show()
+
+```
+
+
+
+## QUESTION|TASK 2
+
+If you talked to someone named Brittany on the phone, what is your guess of his or her age? What ages would you not guess?
+
+Based on the results, I would guess that there is a high probability that Brittany was born between 1988 and 1993. However, the z scores of 1986-1994 are all above 1. It it the lowest probability that she was born after 2000 or before 1983. However, no z-score dips below -1, which means no year is significanly below average. 
+
+```{python}
+#| label: Q2
+#| code-summary: Read and format data
+# Include and execute your code here
+
+brittany_df = df[df['name'] == 'Brittany']
+
+mean_total = brittany_df['Total'].mean()
+std_dev_total = brittany_df['Total'].std()
+brittany_df['z_score'] = (brittany_df['Total'] - mean_total) / std_dev_total
+
+def determine_color(z):
+    if z > 1:
+        return 'Above 1'
+    elif z < 0:
+        return 'Below 0'
+    else:
+        return 'Between 0 and 1'
+
+brittany_df['color'] = brittany_df['z_score'].apply(determine_color)
+
+
+fig = px.bar(brittany_df,
+             x='year',
+             y='z_score',
+             color='color',
+             height=800,
+             width=800,
+             title='Z Score probability of the Name Brittany over time',
+             color_discrete_map={'Above 1': 'black', 'Below 0': 'red', 'Between 0 and 1': 'green' })
+
+# Find years where z_score > 1.5
+high_z_score_years = brittany_df[brittany_df['z_score'] > 1.5]['year']
+
+if not high_z_score_years.empty:
+    start_year = high_z_score_years.min()
+    end_year = high_z_score_years.max()
+
+    # Find the maximum Z score in the range and slightly adjust upwards
+    max_z_in_range = brittany_df[brittany_df['year'].between(start_year, end_year)]['z_score'].max()
+    bracket_top_y = max_z_in_range + 0.2  # Adjust the value to position the bracket just above the highest peak
+
+    # Draw horizontal line (top of the bracket)
+    fig.add_shape(
+        type="line",
+        x0=start_year,
+        y0=bracket_top_y,
+        x1=end_year,
+        y1=bracket_top_y,
+        line=dict(
+            color="RoyalBlue",
+            width=2,
+        ),
+    )
+
+    # Draw vertical line at the start year
+    fig.add_shape(
+        type="line",
+        x0=start_year,
+        y0=bracket_top_y,
+        x1=start_year,
+        y1=bracket_top_y - 0.2,  # Adjust the length of the vertical line as needed
+        line=dict(
+            color="RoyalBlue",
+            width=2,
+        ),
+    )
+
+    # Draw vertical line at the end year
+    fig.add_shape(
+        type="line",
+        x0=end_year,
+        y0=bracket_top_y,
+        x1=end_year,
+        y1=bracket_top_y - 0.2,  # Adjust the length of the vertical line as needed
+        line=dict(
+            color="RoyalBlue",
+            width=2,
+        ),
+    )
+
+    # Add annotation above the bracket
+    fig.add_annotation(
+        x=(start_year + end_year) / 2,
+        y=bracket_top_y + 0.3,  # Position the text above the bracket
+        text="The name Brittany was exceptionally popular these years",
+        showarrow=False,
+        font=dict(
+            size=8,
+            color="RoyalBlue"
+        )
+    )
+
+fig.show()
+```
+
+
+## QUESTION|TASK 3
+
+Mary, Martha, Peter, and Paul are all Christian names. From 1920 - 2000, compare the name usage of each of the four names. What trends do you notice?
+
+Here we see than in the 1960s, which is when there was many cultural movements in the United states, the usage of these names went down. They are all down significantly from their peak. It is unclear from the findings however, whether this is due to a decline in religion or if it is the same trend all the other names follow.
+
+```{python}
+#| label: Q3
+#| code-summary: Read and format data
+# Include and execute your code here
+nm = ["Mary", "Martha", "Peter", "Paul"]
+
+nm_data = df.query("name == @nm").filter(["name", "Total", "year"])
+
+fig = px.line(nm_data, x="year", y="Total", color="name", title="Christian Names Over Time", height=1200, width=800)
+
+fig.update_layout(xaxis_range=[1920, 2000])
+
+fig.add_vline(x=1963, line_width=2, line_dash="dash", line_color="red")
+
+fig.add_annotation(x=1963, y=max(nm_data["Total"]), text="Start of the feminist movement",
+                   showarrow=True, arrowhead=1, ax=-50, ay=-100)
+
+for name in nm:
+    data_1963 = nm_data[(nm_data['year'] == 1963) & (nm_data['name'] == name)]
+    data_2000 = nm_data[(nm_data['year'] == 2000) & (nm_data['name'] == name)]
+
+    if not data_1963.empty and not data_2000.empty:
+        total_1963 = data_1963['Total'].values[0]
+        total_2000 = data_2000['Total'].values[0]
+        percent_decrease = ((total_1963 - total_2000) / total_1963) * 100
+
+        # Calculate midpoint for annotation
+        mid_x = 1963 + (2000 - 1963) / 2
+        mid_y = total_1963 - (total_1963 * percent_decrease / 100) / 2
+
+        # Add line for percent decrease
+        fig.add_shape(type="line",
+                      x0=1963, y0=total_1963,
+                      x1=2000, y1=total_1963 - (total_1963 * percent_decrease / 100),
+                      line=dict(color="black", width=2, dash="dot"))
+
+        # Add annotation at the midpoint of the line
+        fig.add_annotation(
+            x=mid_x, y=mid_y,
+            text=f"{percent_decrease:.2f}% decrease",
+            showarrow=False,
+            xshift=20,
+            font_size=8,
+            bgcolor="white"
+        )
+
+# Show the figure
+fig.show()
+
+```
+
+
+## QUESTION|TASK 4
+
+Think of a unique name from a famous movie. Plot the usage of that name and see how changes line up with the movie release. Does it look like the movie had an effect on usage?
+
+It is impossible to say whether or not the movie E.T. affected the use of the name Elliot based on the current data. It did increase after the movie. But it is unclear whether the movie made the name Elliot popular, if they used the name because it was already getting popular, or if there is no direct causal link at all. 
+
+```{python}
+#| label: Q4
+#| code-summary: Read and format data
+# Include and execute your code here
+
+name = "Elliot"
+et_release = 1982
+
+et_df = df.query("name == @name").filter(["name", "Total", "year"])
+
+et_movie = px.line(et_df, x="year", y="Total", color="name", title="Elliot Name Usage and E.T. Release", height=800, width=800)
+
+et_movie.add_bar(x=[et_release], y=[et_df.query("year == @et_release")["Total"].values[0]], name="E.T. Release")
+
+et_movie.add_annotation(
+    x=et_release,
+    y=et_df.query("year == @et_release")["Total"].values[0],
+    text="E.T. Release",
+    showarrow=True,
+    arrowhead=1)
+
+et_movie.show()
+```
